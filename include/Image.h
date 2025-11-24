@@ -14,14 +14,12 @@ typedef struct
     int height;
     int channel;
     Pixel *data;
-} Image;
+} MyImage;
 
 
 //Functions Prototype
 
-Image LoadImg(const char *filepath);
-
-int SaveImg(Image img, const char *filepath);
-
+MyImage LoadImg(const char *filepath);
+MyImage LoadBMP(const char *filepath);
 
 #endif
