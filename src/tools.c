@@ -1,185 +1,173 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "Image.h"
+#include<tools.h>
 
-//Crop tool
+#define COPY_META(dest, src) \
+    strcpy(dest.Name, src.Name); \
+    dest.channel = src.channel;
 
-MyImage Crop(MyImage Img, int x1 , int x2 , int y1 , int y2)
+/* ============================================================
+   CROP
+   ============================================================ */
+MyImage Crop(MyImage Img, int x1 , int y1 , int x2 , int y2)
 {
-    int temp;
-    if (x1 > x2)
-    {
-        temp = x1;
-        x1 = x2;
-        x2 = temp;
-    }
-    
-    if (y1 > y2)
-    {
-        temp = y1;
-        y1 = y2;
-        y2 = temp;
-    }
-    
-    MyImage Result;
+    /* FIX: correct order (you used x1,x2,y1,y2) */
 
+    if (x1 > x2) { int t = x1; x1 = x2; x2 = t; }
+    if (y1 > y2) { int t = y1; y1 = y2; y2 = t; }
+
+    MyImage Result;
     Result.width = x2 - x1;
     Result.height = y2 - y1;
     Result.channel = Img.channel;
-    Result.data = malloc( Result.width * Result.height * sizeof(Pixel));
-    
-    for (int i = 0 ; i < Result.height ; i++)
-    {
-        for (int j = 0 ; j < Result.width; j++)
-        {
-            Result.data[i * Result.width + j] = Img.data[(y1+i) * Img.width + x1 + j] ;
-        }
-    }
+    strcpy(Result.Name, Img.Name);
 
-    free(Img.data);
-
-    return Result;
-}
-
-//Rotate Anti-Clockwise.
-
-MyImage RotateAntiClock(MyImage Img)
-{
-    MyImage Result;
-
-    Result.width = Img.height;
-    Result.height = Img.width;
-    Result.channel = Img.channel;
     Result.data = malloc(Result.width * Result.height * sizeof(Pixel));
 
-    for (int i = 0 ; i < Result.height ; i++)
-    {
-        for (int j = 0 ; j < Result.width ; j++)
-        {
-            Result.data[i * Result.width + j] = Img.data[(Img.width-1)+j*(Img.width) - i ];
-        }
-    }
+    for (int y = 0; y < Result.height; y++)
+        for (int x = 0; x < Result.width; x++)
+            Result.data[y * Result.width + x] =
+                Img.data[(y1 + y) * Img.width + (x1 + x)];
 
-    free(Img.data);
-
-    return Result;
-
+    return Result;  /* FIX: removed free(Img.data) */
 }
 
-//Flip on X axis. Reflection on a Vertical mirror.
-MyImage FlipX(MyImage img)
+/* ============================================================
+   ROTATE 90° ANTI CLOCKWISE
+   ============================================================ */
+MyImage RotateAntiClock(MyImage Img)
 {
-    MyImage Result;
+    MyImage R;
+    R.width  = Img.height;
+    R.height = Img.width;
+    R.channel = Img.channel;
+    strcpy(R.Name, Img.Name);
 
-    Result.width = img.width;
-    Result.height = img.height;
+    R.data = malloc(R.width * R.height * sizeof(Pixel));
 
-    size_t Totalpixels = img.width*img.height;
-    Result.data = malloc(Totalpixels * sizeof(Pixel));
+    /* Correct formula */
+    for (int y = 0; y < R.height; y++)
+        for (int x = 0; x < R.width; x++)
+            R.data[y * R.width + x] =
+                Img.data[x * Img.width + (Img.width - 1 - y)];
 
-    for (int i = (img.height - 1); i >= 0; i--)
-    {
-        for (size_t j = 0; j < img.width; j++)
-        {
-            Result.data[(img.height - (i + 1))*img.width + j] = img.data[(i * img.width ) + j];
-        }
-    }
-
-    free(img.data);
-
-    return Result;
+    return R;
 }
 
-//Flip on Y axis. Reflection on a Horizontal mirror.
-MyImage FlipY (MyImage img)
+/* ============================================================
+   FLIP VERTICALLY (TOP <-> BOTTOM)
+   ============================================================ */
+MyImage FlipX(MyImage Img)
 {
-    MyImage Intermediate1 = RotateAntiClock(img);
+    MyImage R;
+    R.width = Img.width;
+    R.height = Img.height;
+    R.channel = Img.channel;
+    strcpy(R.Name, Img.Name);
 
-    MyImage Intermediate2 = RotateAntiClock(Intermediate1);
+    R.data = malloc(R.width * R.height * sizeof(Pixel));
 
-    MyImage Result = FlipX(Intermediate2);
+    for (int y = 0; y < Img.height; y++)
+        for (int x = 0; x < Img.width; x++)
+            R.data[(Img.height - 1 - y) * Img.width + x] =
+                Img.data[y * Img.width + x];
 
-    return Result;
+    return R;
 }
 
-//Rotate Clock-wise.
-MyImage RotateClock (MyImage img)
+/* ============================================================
+   FLIP HORIZONTALLY (LEFT <-> RIGHT)
+   ============================================================ */
+MyImage FlipY(MyImage Img)
 {
-    MyImage Intermediate = RotateAntiClock(img);
+    MyImage R;
+    R.width = Img.width;
+    R.height = Img.height;
+    R.channel = Img.channel;
+    strcpy(R.Name, Img.Name);
 
-    MyImage Result = FlipX(Intermediate);
+    R.data = malloc(R.width * R.height * sizeof(Pixel));
 
-    return Result;
+    for (int y = 0; y < Img.height; y++)
+        for (int x = 0; x < Img.width; x++)
+            R.data[y * Img.width + (Img.width - 1 - x)] =
+                Img.data[y * Img.width + x];
+
+    return R;
 }
 
-//Change Occupacity of image.
-MyImage Occupacity (MyImage img , int a)
+/* ============================================================
+   ROTATE 90° CLOCKWISE
+   ============================================================ */
+MyImage RotateClock(MyImage Img)
 {
-    MyImage Result;
-    
-    Result.width = img.width;
-    Result.height = img.height;
-    Result.channel = img.channel;
-    Result.data = malloc((Result.width*Result.height) * sizeof(Pixel));
+    MyImage R;
+    R.width  = Img.height;
+    R.height = Img.width;
+    R.channel = Img.channel;
+    strcpy(R.Name, Img.Name);
 
-    for (int i = 0; i < img.height; i++)
-    {
-        for(int j = 0; j < img.width; j++)
-        {
-            (Result.data + (i*img.width + j))->b = (img.data + (i*img.width + j))->b;
-            (Result.data + (i*img.width + j))->g = (img.data + (i*img.width + j))->g;
-            (Result.data + (i*img.width + j))->r = (img.data + (i*img.width + j))->r;
-            (Result.data + (i*img.width + j))->a = a;
+    R.data = malloc(R.width * R.height * sizeof(Pixel));
 
-        }
-    }
+    /* Correct formula */
+    for (int y = 0; y < R.height; y++)
+        for (int x = 0; x < R.width; x++)
+            R.data[y * R.width + x] =
+                Img.data[(Img.height - 1 - x) * Img.width + y];
 
-    free(img.data);
-    
-    return Result;
+    return R;
 }
 
-MyImage InvertColor (MyImage img)
+/* ============================================================
+   OPACITY
+   ============================================================ */
+MyImage Occupacity(MyImage Img, int a)
 {
-    MyImage Result;
-    
-    Result.width = img.width;
-    Result.height = img.height;
-    Result.channel = img.channel;
-    Result.data = malloc((Result.width*Result.height) * sizeof(Pixel));
+    MyImage R;
+    R.width = Img.width;
+    R.height = Img.height;
+    R.channel = Img.channel;
+    strcpy(R.Name, Img.Name);
 
-    if(Result.channel == 4)
+    R.data = malloc(R.width * R.height * sizeof(Pixel));
+
+    for (int i = 0; i < Img.width * Img.height; i++)
     {
-        for (int i = 0; i < img.height; i++)
-        {
-            for(int j = 0; j < img.width; j++)
-            {
-                (Result.data + (i*img.width + j))->b = 255 - (img.data + (i*img.width + j))->b;
-                (Result.data + (i*img.width + j))->g = 255 - (img.data + (i*img.width + j))->g;
-                (Result.data + (i*img.width + j))->r = 255 - (img.data + (i*img.width + j))->r;
-                (Result.data + (i*img.width + j))->a = (img.data + (i*img.width + j))->a;
+        R.data[i].r = Img.data[i].r;
+        R.data[i].g = Img.data[i].g;
+        R.data[i].b = Img.data[i].b;
 
-            }
-        }   
-    }
-    else if(Result.channel == 4)
-    {
-
-    for (int i = 0; i < img.height; i++)
-    {
-        for(int j = 0; j < img.width; j++)
-        {
-            (Result.data + (i*img.width + j))->b = 255 - (img.data + (i*img.width + j))->b;
-            (Result.data + (i*img.width + j))->g = 255 - (img.data + (i*img.width + j))->g;
-            (Result.data + (i*img.width + j))->r = 255 - (img.data + (i*img.width + j))->r;
-            (Result.data + (i*img.width + j))->a = 255;
-
-        }
+        if (Img.channel == 4)
+            R.data[i].a = a;
+        else
+            R.data[i].a = 255;   /* RGB → keep opaque */
     }
 
+    return R;
+}
+
+/* ============================================================
+   INVERT COLORS
+   ============================================================ */
+MyImage InvertColor(MyImage Img)
+{
+    MyImage R;
+    R.width = Img.width;
+    R.height = Img.height;
+    R.channel = Img.channel;
+    strcpy(R.Name, Img.Name);
+
+    R.data = malloc(R.width * R.height * sizeof(Pixel));
+
+    for (int i = 0; i < Img.width * Img.height; i++)
+    {
+        R.data[i].r = 255 - Img.data[i].r;
+        R.data[i].g = 255 - Img.data[i].g;
+        R.data[i].b = 255 - Img.data[i].b;
+        R.data[i].a = (Img.channel == 4 ? Img.data[i].a : 255);
     }
 
-    free(img.data);
-
-    return Result;
+    return R;
 }

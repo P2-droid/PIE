@@ -3,67 +3,153 @@
 #include <stdlib.h>
 #include "Image.h"
 
+static unsigned int le32(const unsigned char *b)
+{
+    return (unsigned int)b[0] | ((unsigned int)b[1] << 8) | ((unsigned int)b[2] << 16) | ((unsigned int)b[3] << 24);
+}
+static unsigned int le16(const unsigned char *b)
+{
+    return (unsigned int)b[0] | ((unsigned int)b[1] << 8);
+}
 
 MyImage LoadBMP(FILE *f)
 {
     MyImage img;
+    img.width = img.height = img.channel = 0;
+    img.data = NULL;
+    img.Name[0] = '\0';
     strcpy(img.Name, "BMP");
 
-    unsigned char header[14];
-    unsigned char *Image;
-    int offset;
-    size_t total_size;
+    if (!f) return img;
 
-    fread(header, 1, 14, f);
+    /* Find file size */
+    if (fseek(f, 0, SEEK_END) != 0) return img;
+    long total_size_long = ftell(f);
+    if (total_size_long <= 0) return img;
+    size_t total_size = (size_t) total_size_long;
+    rewind(f);
 
-    offset = header[10] | (header[11] << 8) | (header[12] << 16) | (header[13] << 24);
+    unsigned char *filebuf = (unsigned char*)malloc(total_size);
+    if (!filebuf) return img;
 
-    total_size = header[2] | (header[3] << 8) | (header[4] << 16) | (header[5] << 24);
+    if (fread(filebuf, 1, total_size, f) != total_size)
+    {
+        free(filebuf);
+        return img;
+    }
 
-    Image = malloc(total_size);
+    /* Basic header checks */
+    if (total_size < 54 || filebuf[0] != 'B' || filebuf[1] != 'M')
+    {
+        free(filebuf);
+        return img;
+    }
 
-    fseek(f, 0, SEEK_SET);
-    fread(Image, 1, total_size, f);
+    unsigned int offset = le32(&filebuf[10]);
+    /* DIB header size usually at 14..17 */
+    unsigned int dibSize = le32(&filebuf[14]);
 
-    img.width  = Image[18] | (Image[19] << 8) | (Image[20] << 16) | (Image[21] << 24);
-    img.height = Image[22] | (Image[23] << 8) | (Image[24] << 16) | (Image[25] << 24);
-    img.channel = (Image[28] | (Image[29] << 8)) / 8;
+    /* width/height/bpp locations depend on DIB header, but for BITMAPINFOHEADER (40 bytes) use offsets 18,22,28 */
+    if (total_size < 54)
+    {
+        free(filebuf);
+        return img;
+    }
 
-    size_t pixel_count = img.width * img.height;
-    img.data = malloc(pixel_count * sizeof(Pixel));
+    img.width  = (int) le32(&filebuf[18]);
+    img.height = (int) le32(&filebuf[22]); 
+    unsigned int raw_bpp = le16(&filebuf[28]);
+    if (raw_bpp == 0) raw_bpp = 24; 
+    img.channel = (int)(raw_bpp / 8);
+
+    unsigned int pixelDataSize = le32(&filebuf[34]);
+    if (pixelDataSize == 0)
+    {
+        if (offset <= total_size) pixelDataSize = (unsigned int)(total_size - offset);
+        else pixelDataSize = 0;
+    }
+
+    if (img.width <= 0 || img.height == 0 || (img.channel != 3 && img.channel != 4))
+    {
+        /* unsupported or corrupt */
+        free(filebuf);
+        return img;
+    }
+
+    /* Allocate image pixels (width * abs(height)) */
+    int absHeight = img.height > 0 ? img.height : -img.height;
+    size_t pixel_count = (size_t)img.width * (size_t)absHeight;
+    img.data = (Pixel*)malloc(pixel_count * sizeof(Pixel));
+    if (!img.data)
+    {
+        free(filebuf);
+        img.width = img.height = img.channel = 0;
+        return img;
+    }
 
     if (img.channel == 4)
     {
-        size_t loop = total_size - offset;
+        /* 32bpp: usually no row padding; BMP stores B,G,R,A in that order */
+        /* file rows are usually bottom-up if height > 0 */
+        size_t expected = (size_t)absHeight * (size_t)img.width * 4;
+        if (pixelDataSize < expected) {
+            /* still try to avoid overflow; clamp loop */
+            expected = pixelDataSize;
+        }
 
-        for (size_t i = 0; i < loop; i++)
+        /* iterate through each file-row (fr), map to image row (ir) */
+        for (int fr = 0; fr < absHeight; ++fr)
         {
-            size_t p = i / 4;
-
-            if ((i % 4) == 0) img.data[p].b = Image[offset + i];
-            else if ((i % 4) == 1) img.data[p].g = Image[offset + i];
-            else if ((i % 4) == 2) img.data[p].r = Image[offset + i];
-            else if ((i % 4) == 3) img.data[p].a = Image[offset + i];
+            int ir = (img.height > 0) ? (absHeight - 1 - fr) : fr; /* bottom-up -> flip */
+            size_t rowBase = (size_t)offset + (size_t)fr * (size_t)img.width * 4;
+            for (int x = 0; x < img.width; ++x)
+            {
+                size_t idx = rowBase + (size_t)x * 4;
+                if (idx + 3 >= total_size) {
+                    img.data[(size_t)ir * img.width + x].b = 0;
+                    img.data[(size_t)ir * img.width + x].g = 0;
+                    img.data[(size_t)ir * img.width + x].r = 0;
+                    img.data[(size_t)ir * img.width + x].a = 255;
+                } else {
+                    img.data[(size_t)ir * img.width + x].b = filebuf[idx + 0];
+                    img.data[(size_t)ir * img.width + x].g = filebuf[idx + 1];
+                    img.data[(size_t)ir * img.width + x].r = filebuf[idx + 2];
+                    img.data[(size_t)ir * img.width + x].a = filebuf[idx + 3];
+                }
+            }
         }
     }
-    else if (img.channel == 3)
+    else /* img.channel == 3 */
     {
-        int pad = (4 - (img.width * 3) % 4) % 4;
+        /* 24bpp: rows padded to 4-byte boundaries */
+        int rowStride = img.width * 3;
+        int pad = (4 - (rowStride % 4)) % 4;
+        int fileRowBytes = rowStride + pad;
 
-        for (int y = 0; y < img.height; y++)
+        for (int fr = 0; fr < absHeight; ++fr)
         {
-            for (int x = 0; x < img.width; x++)
+            int ir = (img.height > 0) ? (absHeight - 1 - fr) : fr;
+            size_t rowBase = (size_t)offset + (size_t)fr * (size_t)fileRowBytes;
+
+            for (int x = 0; x < img.width; ++x)
             {
-                size_t pixelstart = offset + y*(img.width*3 + pad) + x*3;
-                img.data[y*img.width + x].b = Image[pixelstart + 0];
-                img.data[y*img.width + x].g = Image[pixelstart + 1];
-                img.data[y*img.width + x].r = Image[pixelstart + 2];
-                img.data[y*img.width + x].a = 255;
+                size_t idx = rowBase + (size_t)x * 3;
+                if (idx + 2 >= total_size) {
+                    img.data[(size_t)ir * img.width + x].b = 0;
+                    img.data[(size_t)ir * img.width + x].g = 0;
+                    img.data[(size_t)ir * img.width + x].r = 0;
+                    img.data[(size_t)ir * img.width + x].a = 255;
+                } else {
+                    img.data[(size_t)ir * img.width + x].b = filebuf[idx + 0];
+                    img.data[(size_t)ir * img.width + x].g = filebuf[idx + 1];
+                    img.data[(size_t)ir * img.width + x].r = filebuf[idx + 2];
+                    img.data[(size_t)ir * img.width + x].a = 255;
+                }
             }
         }
     }
 
-    free(Image);
+    free(filebuf);
     return img;
 }
 
@@ -73,143 +159,161 @@ int SaveBMP(FILE *f, MyImage img)
 
     int width = img.width;
     int height = img.height;
-
     int channels = img.channel;
-    if (channels != 3 && channels != 4)
-    {
-        printf("Unsupported channel count.\n");
-        fclose(f);
-        return 1;
-    }
+    if (channels != 3 && channels != 4) return 1;
+
+    int absHeight = (height >= 0) ? height : -height; 
 
     int bytesPerPixel = channels;
     int rowBytes = width * bytesPerPixel;
-
     int padding = 0;
     if (channels == 3)
         padding = (4 - (rowBytes % 4)) % 4;
 
     int rowSize = rowBytes + padding;
-    int pixelDataSize = rowSize * height;
+    unsigned int pixelDataSize = (unsigned int)rowSize * (unsigned int)absHeight;
+    unsigned int headerSize = 54;
+    unsigned int fileSize = headerSize + pixelDataSize;
 
-    int headerSize = 54;
-    int fileSize = headerSize + pixelDataSize;
+    unsigned char header[54];
+    memset(header, 0, 54);
 
-    unsigned char header[54] = {0};
-
-    // BMP signature
     header[0] = 'B';
     header[1] = 'M';
 
-    // File size
-    header[2] = (unsigned char)(fileSize);
-    header[3] = (unsigned char)(fileSize >> 8);
-    header[4] = (unsigned char)(fileSize >> 16);
-    header[5] = (unsigned char)(fileSize >> 24);
+    /* file size */
+    header[2] = (unsigned char)(fileSize & 0xFF);
+    header[3] = (unsigned char)((fileSize >> 8) & 0xFF);
+    header[4] = (unsigned char)((fileSize >> 16) & 0xFF);
+    header[5] = (unsigned char)((fileSize >> 24) & 0xFF);
 
-    // Pixel data offset
-    header[10] = 54;
 
-    // DIB header size
+    /* offset to pixel data = 54 */
+    header[10] = (unsigned char)(headerSize & 0xFF);
+    header[11] = (unsigned char)((headerSize >> 8) & 0xFF);
+    header[12] = (unsigned char)((headerSize >> 16) & 0xFF);
+    header[13] = (unsigned char)((headerSize >> 24) & 0xFF);
+
+    /* DIB header size = 40 (BITMAPINFOHEADER) */
     header[14] = 40;
+    header[15] = header[16] = header[17] = 0;
 
-    // Width
-    header[18] = (unsigned char)(width);
-    header[19] = (unsigned char)(width >> 8);
-    header[20] = (unsigned char)(width >> 16);
-    header[21] = (unsigned char)(width >> 24);
+    /* width */
+    header[18] = (unsigned char)(width & 0xFF);
+    header[19] = (unsigned char)((width >> 8) & 0xFF);
+    header[20] = (unsigned char)((width >> 16) & 0xFF);
+    header[21] = (unsigned char)((width >> 24) & 0xFF);
 
-    // Height (MUST be positive)
-    header[22] = (unsigned char)(height);
-    header[23] = (unsigned char)(height >> 8);
-    header[24] = (unsigned char)(height >> 16);
-    header[25] = (unsigned char)(height >> 24);
+    /* height: store positive to indicate bottom-up */
+    header[22] = (unsigned char)(absHeight & 0xFF);
+    header[23] = (unsigned char)((absHeight >> 8) & 0xFF);
+    header[24] = (unsigned char)((absHeight >> 16) & 0xFF);
+    header[25] = (unsigned char)((absHeight >> 24) & 0xFF);
 
-    // Planes
+    /* planes (2 bytes) = 1 */
     header[26] = 1;
+    header[27] = 0;
 
-    // Bits per pixel
-    header[28] = (channels == 3) ? 24 : 32;
+    /* bits per pixel (2 bytes) */
+    unsigned short bits = (unsigned short)(channels * 8);
+    header[28] = (unsigned char)(bits & 0xFF);
+    header[29] = (unsigned char)((bits >> 8) & 0xFF);
 
-    // Compression (0 = BI_RGB)
-    header[30] = 0;
-    header[31] = 0;
-    header[32] = 0;
-    header[33] = 0;
+    /* compression (4 bytes) = 0 (BI_RGB) */
+    header[30]=header[31]=header[32]=header[33]=0;
 
-    // Image size
-    header[34] = (unsigned char)(pixelDataSize);
-    header[35] = (unsigned char)(pixelDataSize >> 8);
-    header[36] = (unsigned char)(pixelDataSize >> 16);
-    header[37] = (unsigned char)(pixelDataSize >> 24);
+    /* image size (4 bytes) */
+    header[34] = (unsigned char)(pixelDataSize & 0xFF);
+    header[35] = (unsigned char)((pixelDataSize >> 8) & 0xFF);
+    header[36] = (unsigned char)((pixelDataSize >> 16) & 0xFF);
+    header[37] = (unsigned char)((pixelDataSize >> 24) & 0xFF);
 
-    fwrite(header, 1, 54, f);
+    if (fwrite(header, 1, 54, f) != 54) {
+        fclose(f);
+        return 1;
+    }
 
-    unsigned char pad[3] = {0,0,0};
+    unsigned char padbuf[3] = {0,0,0};
 
-    // Write pixels (BMP is bottom-up)
-    for (int y = height - 1; y >= 0; y--)
+    /* write pixel rows bottom-up */
+    for (int y = absHeight - 1; y >= 0; --y)
     {
-        for (int x = 0; x < width; x++)
+        for (int x = 0; x < width; ++x)
         {
             Pixel px = img.data[y * width + x];
-
-            fwrite(&px.b, 1, 1, f);
-            fwrite(&px.g, 1, 1, f);
-            fwrite(&px.r, 1, 1, f);
-
+            /* write B G R */
+            if (fwrite(&px.b, 1, 1, f) != 1) { fclose(f); return 1; }
+            if (fwrite(&px.g, 1, 1, f) != 1) { fclose(f); return 1; }
+            if (fwrite(&px.r, 1, 1, f) != 1) { fclose(f); return 1; }
             if (channels == 4)
-                fwrite(&px.a, 1, 1, f);
+            {
+                if (fwrite(&px.a, 1, 1, f) != 1) { fclose(f); return 1; }
+            }
         }
 
         if (channels == 3)
-            fwrite(pad, 1, padding, f);
+        {
+            if (padding > 0)
+            {
+                if (fwrite(padbuf, 1, padding, f) != (size_t)padding) { fclose(f); return 1; }
+            }
+        }
     }
 
     fclose(f);
     return 0;
 }
 
-
-
 MyImage LoadImg(const char *filepath)
 {
-    FILE *f = fopen(filepath, "rb");
     MyImage img;
+    img.width = img.height = img.channel = 0;
+    img.data = NULL;
+    img.Name[0] = '\0';
 
+    FILE *f = fopen(filepath, "rb");
     if (!f)
     {
-        printf("File does not exist\n");
+        fprintf(stderr, "File does not exist: %s\n", filepath);
         return img;
     }
 
-    unsigned char header[2];
-    fread(header, 1, 2, f);
+    unsigned char magic[2];
+    if (fread(magic, 1, 2, f) != 2) { fclose(f); return img; }
+    rewind(f);
 
-    if (header[0] == 'B' && header[1] == 'M')
+    if (magic[0] == 'B' && magic[1] == 'M')
     {
-        fseek(f, 0, SEEK_SET);   // FIXED
         img = LoadBMP(f);
+    }
+    else
+    {
+        fprintf(stderr, "Unsupported image format: %c%c\n", magic[0], magic[1]);
     }
 
     fclose(f);
     return img;
 }
 
-
 int SaveImg (MyImage img, const char *filepath)
 {
     FILE *f = fopen(filepath, "wb");
     if (!f)
     {
-        printf("Cannot open file for writing.\n");
+        fprintf(stderr, "Cannot open file for writing: %s\n", filepath);
         return 1;
     }
 
-
-    if (strcmp(img.Name, "BMP"))
+    if (strcmp(img.Name, "BMP") == 0)
     {
-       int a = SaveBMP(f ,img);
+       int a = SaveBMP(f, img);
        return a;
+    }
+    else
+    {
+       /* unsupported type */
+       fprintf(stderr, "Unsupported image type for saving: %s\n", img.Name);
+       fclose(f);
+       return 1;
     }
 }
