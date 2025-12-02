@@ -8,13 +8,8 @@
     strcpy(dest.Name, src.Name); \
     dest.channel = src.channel;
 
-/* ============================================================
-   CROP
-   ============================================================ */
 MyImage Crop(MyImage Img, int x1 , int y1 , int x2 , int y2)
 {
-    /* FIX: correct order (you used x1,x2,y1,y2) */
-
     if (x1 > x2) { int t = x1; x1 = x2; x2 = t; }
     if (y1 > y2) { int t = y1; y1 = y2; y2 = t; }
 
@@ -31,12 +26,9 @@ MyImage Crop(MyImage Img, int x1 , int y1 , int x2 , int y2)
             Result.data[y * Result.width + x] =
                 Img.data[(y1 + y) * Img.width + (x1 + x)];
 
-    return Result;  /* FIX: removed free(Img.data) */
+    return Result; 
 }
 
-/* ============================================================
-   ROTATE 90° ANTI CLOCKWISE
-   ============================================================ */
 MyImage RotateAntiClock(MyImage Img)
 {
     MyImage R;
@@ -47,7 +39,6 @@ MyImage RotateAntiClock(MyImage Img)
 
     R.data = malloc(R.width * R.height * sizeof(Pixel));
 
-    /* Correct formula */
     for (int y = 0; y < R.height; y++)
         for (int x = 0; x < R.width; x++)
             R.data[y * R.width + x] =
@@ -56,9 +47,6 @@ MyImage RotateAntiClock(MyImage Img)
     return R;
 }
 
-/* ============================================================
-   FLIP VERTICALLY (TOP <-> BOTTOM)
-   ============================================================ */
 MyImage FlipX(MyImage Img)
 {
     MyImage R;
@@ -77,9 +65,6 @@ MyImage FlipX(MyImage Img)
     return R;
 }
 
-/* ============================================================
-   FLIP HORIZONTALLY (LEFT <-> RIGHT)
-   ============================================================ */
 MyImage FlipY(MyImage Img)
 {
     MyImage R;
@@ -98,9 +83,6 @@ MyImage FlipY(MyImage Img)
     return R;
 }
 
-/* ============================================================
-   ROTATE 90° CLOCKWISE
-   ============================================================ */
 MyImage RotateClock(MyImage Img)
 {
     MyImage R;
@@ -120,9 +102,6 @@ MyImage RotateClock(MyImage Img)
     return R;
 }
 
-/* ============================================================
-   OPACITY
-   ============================================================ */
 MyImage Occupacity(MyImage Img, int a)
 {
     MyImage R;
@@ -142,15 +121,12 @@ MyImage Occupacity(MyImage Img, int a)
         if (Img.channel == 4)
             R.data[i].a = a;
         else
-            R.data[i].a = 255;   /* RGB → keep opaque */
+            R.data[i].a = 255;  
     }
 
     return R;
 }
 
-/* ============================================================
-   INVERT COLORS
-   ============================================================ */
 MyImage InvertColor(MyImage Img)
 {
     MyImage R;
